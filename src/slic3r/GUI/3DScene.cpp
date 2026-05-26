@@ -7,6 +7,7 @@
 #include "Plater.hpp"
 #include "BitmapCache.hpp"
 #include "Camera.hpp"
+#include "GLModel.hpp"
 
 #include "libslic3r/BuildVolume.hpp"
 #include "libslic3r/ExtrusionEntity.hpp"
@@ -319,6 +320,19 @@ void GLVolume::set_render_color()
         else {
             // to make black not too hard too see
             base_color = adjust_color_for_rendering(color);
+        }
+
+        // OrcaSlicer-Rep5x: modifiers whose underlying ModelVolume name starts with "Rep5x"
+        // are direction modifiers. Look up the live ModelVolume name (GLVolume's own name
+        // field is stale after a programmatic rename until the scene is fully rebuilt).
+        if (is_modifier) {
+            const auto& mobjs = GUI::wxGetApp().model().objects;
+            const int oid = object_idx(), vid = volume_idx();
+            if (oid >= 0 && oid < (int)mobjs.size()
+                && vid >= 0 && vid < (int)mobjs[oid]->volumes.size()
+                && mobjs[oid]->volumes[vid]->name.rfind("Rep5x", 0) == 0) {
+                base_color = ColorRGBA{1.0f, 0.45f, 0.05f, 0.65f};
+            }
         }
 
         // Apply selection brightening AFTER determining base color
@@ -2134,6 +2148,97 @@ void _3DScene::extrusionentity_to_verts(const ExtrusionEntity* extrusion_entity,
             }
         }
     }
+}
+
+// OrcaSlicer-Rep5x: render a small XYZ triad on every modifier volume with non-identity rotation.
+// Reuses Orca's stilized_arrow + flat shader. Lazy-inits the arrow GLModel once.
+void render_rep5x_triads(const GLVolumeCollection& volumes, const GUI::Camera& camera)
+{
+    using namespace Slic3r::GUI;
+
+    // Arrow pointing along +Z by default. Stem at origin, tip at z = total_length.
+    constexpr float TIP_RADIUS    = 1.6f;
+    constexpr float TIP_HEIGHT    = 6.0f;
+    constexpr float STEM_RADIUS   = 0.6f;
+    constexpr float STEM_HEIGHT   = 14.0f;
+    constexpr float ARROW_SCALE   = 1.8f;       // global size multiplier (was 1.5 — too small)
+
+    static GLModel s_arrow;
+    static bool s_inited = false;
+    if (!s_inited) {
+        s_arrow.init_from(stilized_arrow(16, TIP_RADIUS, TIP_HEIGHT, STEM_RADIUS, STEM_HEIGHT));
+        s_inited = true;
+    }
+
+    GLShaderProgram* shader = wxGetApp().get_shader("flat");
+    if (shader == nullptr) return;
+
+    const Transform3d& view_matrix = camera.get_view_matrix();
+    const Transform3d& proj_matrix = camera.get_projection_matrix();
+
+    glsafe(::glEnable(GL_DEPTH_TEST));
+    glsafe(::glEnable(GL_BLEND));
+    glsafe(::glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA));
+
+    shader->start_using();
+    shader->set_uniform("projection_matrix", proj_matrix);
+
+    const ColorRGBA red  {1.0f, 0.15f, 0.15f, 1.0f};
+    const ColorRGBA green{0.10f, 0.85f, 0.20f, 1.0f};
+    const ColorRGBA blue {0.20f, 0.45f, 1.0f,  1.0f};
+
+    const auto& mobjs = wxGetApp().model().objects;
+    for (const GLVolume* gv : volumes.volumes) {
+        if (gv == nullptr || !gv->is_modifier || !gv->is_active) continue;
+        // Look up the live ModelVolume name via composite_id (GLVolume.name can be stale
+        // right after a programmatic rename — the GLVolume isn't always re-created).
+        const int oid = gv->object_idx(), vid = gv->volume_idx();
+        if (oid < 0 || oid >= (int)mobjs.size()) continue;
+        if (vid < 0 || vid >= (int)mobjs[oid]->volumes.size()) continue;
+        if (mobjs[oid]->volumes[vid]->name.rfind("Rep5x", 0) != 0) continue;
+
+        const Eigen::Matrix3d rot_inst = gv->get_instance_transformation().get_rotation_matrix().linear();
+        const Eigen::Matrix3d rot_vol  = gv->get_volume_transformation().get_rotation_matrix().linear();
+        const Eigen::Matrix3d combined = rot_inst * rot_vol;
+
+        // World center of the modifier
+        const Transform3d world_tr = gv->world_matrix();
+        const Vec3d        center  = gv->transformed_bounding_box().center();
+
+        auto draw_axis = [&](const Eigen::Vector3d& axis_dir_world, const ColorRGBA& color) {
+            // Rotation that maps default-arrow's +Z onto axis_dir_world
+            const Eigen::Vector3d zaxis(0, 0, 1);
+            const Eigen::Vector3d unit = axis_dir_world.normalized();
+            const double cos_a = zaxis.dot(unit);
+            Eigen::Matrix3d rot;
+            if (cos_a > 0.9999) {
+                rot = Eigen::Matrix3d::Identity();
+            } else if (cos_a < -0.9999) {
+                // 180° flip — rotate about X
+                rot = Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()).toRotationMatrix();
+            } else {
+                const Eigen::Vector3d cross = zaxis.cross(unit).normalized();
+                const double          angle = std::acos(std::clamp(cos_a, -1.0, 1.0));
+                rot = Eigen::AngleAxisd(angle, cross).toRotationMatrix();
+            }
+            Transform3d model = Transform3d::Identity();
+            model.translate(center);
+            model.rotate(rot);
+            model.scale(ARROW_SCALE);
+
+            shader->set_uniform("view_model_matrix", view_matrix * model);
+            s_arrow.set_color(color);
+            s_arrow.render();
+        };
+
+        // Local axes in world space = columns of `combined`
+        draw_axis(combined.col(0), red);    // local +X
+        draw_axis(combined.col(1), green);  // local +Y
+        draw_axis(combined.col(2), blue);   // local +Z = BUILD DIRECTION
+    }
+
+    shader->stop_using();
+    glsafe(::glDisable(GL_BLEND));
 }
 
 } // namespace Slic3r

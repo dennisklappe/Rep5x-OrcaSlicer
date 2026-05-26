@@ -1,0 +1,54 @@
+{
+    "name": "Rep5x",
+    "version": "01.00.00.00",
+    "force_update": "0",
+    "description": "Rep5x — open-source 5-axis retrofit (head-mounted B-tilt + C-pan). https://rep5x.com",
+    "machine_model_list": [
+        {
+            "name": "Rep5x Ender 5 Pro",
+            "sub_path": "machine/Rep5x Ender 5 Pro.json"
+        }
+    ],
+    "process_list": [
+        {
+            "name": "fdm_process_common",
+            "sub_path": "process/fdm_process_common.json"
+        },
+        {
+            "name": "fdm_process_rep5x_common",
+            "sub_path": "process/fdm_process_rep5x_common.json"
+        },
+        {
+            "name": "0.20mm Standard @Rep5x",
+            "sub_path": "process/0.20mm Standard @Rep5x.json"
+        }
+    ],
+    "filament_list": [
+        {
+            "name": "fdm_filament_common",
+            "sub_path": "filament/fdm_filament_common.json"
+        },
+        {
+            "name": "fdm_filament_pla",
+            "sub_path": "filament/fdm_filament_pla.json"
+        },
+        {
+            "name": "Generic PLA @Rep5x",
+            "sub_path": "filament/Generic PLA @Rep5x.json"
+        }
+    ],
+    "machine_list": [
+        {
+            "name": "fdm_machine_common",
+            "sub_path": "machine/fdm_machine_common.json"
+        },
+        {
+            "name": "fdm_rep5x_common",
+            "sub_path": "machine/fdm_rep5x_common.json"
+        },
+        {
+            "name": "Rep5x Ender 5 Pro 0.4 nozzle",
+            "sub_path": "machine/Rep5x Ender 5 Pro 0.4 nozzle.json"
+        }
+    ]
+}

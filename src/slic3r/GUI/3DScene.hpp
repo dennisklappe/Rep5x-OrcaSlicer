@@ -78,6 +78,15 @@ struct ObjectFilamentResults {
 // Return appropriate color based on the ModelVolume.
 extern ColorRGBA color_from_model_volume(const ModelVolume& model_volume);
 
+class GLVolumeCollection;
+namespace GUI { class Camera; }
+
+// OrcaSlicer-Rep5x: draws a small XYZ coordinate triad on every modifier volume that has a
+// non-identity rotation, so users can see the build direction at a glance. Red = local X,
+// green = local Y, blue = local Z (= build direction). Lazy-initialises its arrow GLModels
+// on first call; subsequent calls are cheap.
+extern void render_rep5x_triads(const GLVolumeCollection& volumes, const GUI::Camera& camera);
+
 class GLVolume {
 public:
     std::string name;

@@ -1,0 +1,28 @@
+{
+    "type": "machine",
+    "name": "Rep5x Ender 5 Pro 0.4 nozzle",
+    "inherits": "fdm_rep5x_common",
+    "from": "system",
+    "setting_id": "RM001",
+    "instantiation": "true",
+    "printer_model": "Rep5x Ender 5 Pro",
+    "default_filament_profile": [
+        "Generic PLA @Rep5x"
+    ],
+    "default_print_profile": "0.20mm Standard @Rep5x",
+    "nozzle_diameter": [
+        "0.4"
+    ],
+    "printable_area": [
+        "0x0",
+        "220x0",
+        "220x220",
+        "0x220"
+    ],
+    "printable_height": "300",
+    "nozzle_type": "undefine",
+    "auxiliary_fan": "0",
+    "gcode_flavor": "marlin5axis_rep5x",
+    "layer_change_gcode": ";LAYER_CHANGE\n;[layer_z]\nG92 E0",
+    "before_layer_change_gcode": ""
+}

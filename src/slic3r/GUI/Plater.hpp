@@ -329,6 +329,12 @@ public:
     void reload_gcode_from_disk();
     void reload_print();
 
+    // OrcaSlicer-Rep5x: switch to the Preview tab WITHOUT the auto-reslice that
+    // set_current_panel does by default. Used after externally populating the
+    // active plate's slice_result so Orca doesn't immediately re-slice the model
+    // and overwrite our 5-axis toolpaths.
+    void switch_to_preview_no_slice();
+
     // SoftFever
     void calib_pa(const Calib_Params& params);
     void calib_flowrate(bool is_linear, int pass);

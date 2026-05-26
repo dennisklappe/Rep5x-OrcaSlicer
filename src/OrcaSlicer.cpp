@@ -50,6 +50,7 @@ using namespace nlohmann;
 #include "libslic3r/Geometry.hpp"
 #include "libslic3r/GCode.hpp"
 #include "libslic3r/GCode/PostProcessor.hpp"
+#include "libslic3r/FiveAxis/Rep5xDemo.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/ModelArrange.hpp"
 #include "libslic3r/Platform.hpp"
@@ -1176,6 +1177,15 @@ static void load_downward_settings_list_from_config(std::string config_file, std
 
 int CLI::run(int argc, char **argv)
 {
+    // OrcaSlicer-Rep5x: hidden demo flag — produces a valid 5-axis G-code from a
+    // hardcoded L-shape + modifier. Handled before any heavy init so we skip
+    // wxWidgets + profile loading entirely.
+    for (int i = 1; i + 1 < argc; ++i) {
+        if (std::string(argv[i]) == "--rep5x-demo-l") {
+            return Slic3r::FiveAxis::Rep5xDemo::run_l_shape(argv[i + 1]);
+        }
+    }
+
     // Mark the main thread for the debugger and for runtime checks.
     set_current_thread_name("orcaslicer_main");
     // Save the thread ID of the main thread.

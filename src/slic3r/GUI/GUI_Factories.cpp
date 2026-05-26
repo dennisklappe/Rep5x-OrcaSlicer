@@ -670,6 +670,29 @@ void MenuFactory::append_menu_items_add_volume(wxMenu* menu)
             []() { return obj_list()->is_instance_or_object_selected(); }, m_parent);
     }
 
+    // OrcaSlicer-Rep5x: explicit "Add Rep5x direction modifier" right-click action.
+    // Creates a cube PARAMETER_MODIFIER but pre-names it "Rep5x direction" so our
+    // 5-axis pipeline picks it up. Region geometry stays axis-aligned even when the
+    // user rotates the modifier — rotation only sets the build direction.
+    append_menu_item(menu, wxID_ANY, _L("Add Rep5x direction modifier"),
+        _L("Add a 5-axis build-direction modifier. Move it to choose which region prints differently; rotate it to set the build direction."),
+        [](wxCommandEvent&) {
+            obj_list()->load_generic_subobject("Cube", ModelVolumeType::PARAMETER_MODIFIER);
+            auto* plater = wxGetApp().plater();
+            if (plater && !plater->model().objects.empty()) {
+                auto* obj = plater->model().objects.front();
+                if (!obj->volumes.empty()) {
+                    obj->volumes.back()->name = "Rep5x direction";
+                    // Refresh the 3D scene so the GLVolume picks up the new name
+                    // (color tint + XYZ triad are gated on name prefix).
+                    plater->update();
+                    obj_list()->update_after_undo_redo();
+                }
+            }
+        },
+        "menu_add_modifier", menu,
+        []() { return obj_list()->is_instance_or_object_selected(); }, m_parent);
+
     append_menu_item_layers_editing(menu);
 }
 
@@ -1421,6 +1444,71 @@ void MenuFactory::create_sla_object_menu()
         [](wxCommandEvent&) { plater()->optimize_rotation(); });
 }
 
+// OrcaSlicer-Rep5x: snap the selected Rep5x direction modifier so its closest face
+// flushes against the nearest face of the main model part (axis-aligned snap on
+// whichever XYZ direction has the smallest delta).
+static void snap_rep5x_modifier_to_part()
+{
+    auto* ol = obj_list();
+    if (!ol) return;
+    ModelVolume* mod = ol->get_selected_model_volume();
+    if (mod == nullptr || !mod->is_modifier() || mod->name.rfind("Rep5x", 0) != 0) {
+        wxMessageBox(_L("Select a Rep5x direction modifier first (in the object list or viewport)."),
+                     _L("Snap to face"), wxICON_INFORMATION);
+        return;
+    }
+
+    const ModelObject* obj = mod->get_object();
+    if (obj == nullptr || obj->volumes.empty()) return;
+
+    // Find the first MODEL_PART volume (the main mesh) and its world bbox.
+    const ModelVolume* main_part = nullptr;
+    for (const ModelVolume* v : obj->volumes) {
+        if (v->is_model_part()) { main_part = v; break; }
+    }
+    if (main_part == nullptr) return;
+
+    // Use the first instance for world transforms.
+    const Geometry::Transformation inst_tr =
+        obj->instances.empty() ? Geometry::Transformation()
+                               : obj->instances.front()->get_transformation();
+
+    auto world_bbox = [&inst_tr](const ModelVolume* v) {
+        TriangleMesh m = v->mesh();
+        m.transform(inst_tr.get_matrix() * v->get_transformation().get_matrix());
+        return m.bounding_box();
+    };
+    const BoundingBoxf3 mod_bb  = world_bbox(mod);
+    const BoundingBoxf3 main_bb = world_bbox(main_part);
+
+    int    best_axis  = -1;
+    double best_delta = 0.0;
+    double best_abs   = std::numeric_limits<double>::infinity();
+    for (int axis = 0; axis < 3; ++axis) {
+        const double m1 = mod_bb.min[axis],  m2 = mod_bb.max[axis];
+        const double p1 = main_bb.min[axis], p2 = main_bb.max[axis];
+        // 4 candidate snaps: align modifier's edges to the main part's edges.
+        const double cands[4] = { p1 - m1, p2 - m2, p1 - m2, p2 - m1 };
+        for (double d : cands) {
+            const double a = std::abs(d);
+            if (a < best_abs) {
+                best_abs   = a;
+                best_delta = d;
+                best_axis  = axis;
+            }
+        }
+    }
+    if (best_axis < 0) return;
+
+    // Apply translation along just the chosen axis.
+    Vec3d offset = mod->get_transformation().get_offset();
+    offset[best_axis] += best_delta;
+    mod->set_offset(offset);
+
+    // Refresh the canvas + sidebar fields.
+    plater()->update();
+}
+
 void MenuFactory::create_part_menu()
 {
     wxMenu* menu = &m_part_menu;
@@ -1443,6 +1531,14 @@ void MenuFactory::create_part_menu()
     append_menu_item(&m_part_menu, wxID_ANY, _L("Split"), _L("Split the selected object into multiple parts"),
         [](wxCommandEvent&) { plater()->split_volume(); }, "split_parts", nullptr,
         []() { return plater()->can_split(false); }, m_parent);
+
+    // OrcaSlicer-Rep5x: snap a Rep5x direction modifier flush against the main part's nearest face.
+    // Always shown; the action itself no-ops with a notification when the selection isn't a Rep5x modifier.
+    append_menu_item(&m_part_menu, wxID_ANY, _L("Snap Rep5x modifier to nearest face"),
+        _L("Translate the selected Rep5x direction modifier on its closest axis so its nearest face is flush with the main model part's face."),
+        [](wxCommandEvent&) { snap_rep5x_modifier_to_part(); }, "menu_add_modifier", nullptr,
+        []() { return true; }, m_parent);
+
     m_part_menu.AppendSeparator();
     append_menu_item_per_object_process(&m_part_menu);
     append_menu_item_per_object_settings(&m_part_menu);

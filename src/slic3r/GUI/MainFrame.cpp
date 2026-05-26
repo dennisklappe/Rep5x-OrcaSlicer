@@ -13,6 +13,13 @@
 #include <wx/filename.h>
 #include <wx/debug.h>
 #include <wx/utils.h>
+#include <wx/stdpaths.h>
+
+#include <cstdio>
+#ifdef _WIN32
+#  define popen  _popen
+#  define pclose _pclose
+#endif
 
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/log/trivial.hpp>
@@ -23,6 +30,13 @@
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/SLAPrint.hpp"
 #include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/FiveAxis/Rep5xPipeline.hpp"
+#include "libslic3r/Geometry.hpp"
+#include "libslic3r/Model.hpp"
+#include <filesystem>
+#ifndef _WIN32
+#  include <unistd.h>
+#endif
 
 #include "Tab.hpp"
 #include "ProgressStatusBar.hpp"
@@ -42,6 +56,7 @@
 #include "format.hpp"
 // BBS
 #include "PartPlate.hpp"
+#include "libslic3r/GCode/GCodeProcessor.hpp"
 #include "Preferences.hpp"
 #include "Widgets/ProgressDialog.hpp"
 #include "BindDialog.hpp"
@@ -1871,6 +1886,13 @@ wxBoxSizer* MainFrame::create_side_tools()
 
     m_slice_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent& event)
         {
+            // OrcaSlicer-Rep5x: if any modifier has a non-identity rotation, divert this click
+            // through the 5-axis pipeline (uses currently-active presets). Otherwise fall through
+            // to Orca's normal planar slice path.
+            if (has_rotated_modifier()) {
+                slice_5axis_action(/*from_main_button=*/true);
+                return;
+            }
 
             //this->m_plater->select_view_3D("Preview");
             m_plater->exit_gizmo();
@@ -2742,6 +2764,20 @@ void MainFrame::init_menubar_as_editor()
             [this](wxCommandEvent&) { if (m_plater != nullptr) m_plater->export_toolpaths_to_obj(); }, "menu_export_toolpaths", nullptr,
             [this]() {return can_export_toolpaths(); }, this);
 
+        // OrcaSlicer-Rep5x: 5-axis slicing via rotated modifier-volume regions.
+        // Uses the user's CURRENTLY-ACTIVE printer/process/filament presets (any printer).
+        // Only modifiers with a NON-IDENTITY rotation become direction regions; unrotated
+        // modifiers stay as normal Orca modifiers (no separate region).
+        append_menu_item(export_menu, wxID_ANY, _L("Slice 5-axis (Rep5x)") + dots,
+            _L("Run the 5-axis pipeline using rotated modifier objects as build-direction regions, then save G-code. Uses the currently-active printer/process/filament profiles."),
+            [this](wxCommandEvent&) { this->slice_5axis_action(/*from_main_button=*/false); },
+            "menu_export_sliced_file", nullptr,
+            [this]() {
+                if (!m_plater) return false;
+                const auto& model = m_plater->model();
+                return !model.objects.empty() && !model.objects.front()->volumes.empty();
+            }, this);
+
         append_menu_item(
             export_menu, wxID_ANY, _L("Export Preset Bundle") + dots /* + "\t" + ctrl + "E"*/, _L("Export current configuration to files"),
             [this](wxCommandEvent &) { export_config(); },
@@ -3580,6 +3616,189 @@ void MainFrame::reslice_now()
 {
     if (m_plater)
         m_plater->reslice();
+}
+
+// Rep5x direction modifiers are identified by their name starting with "Rep5x".
+// Use the dedicated File → Export → "Add Rep5x direction modifier" menu item to
+// create one; that names the modifier `Rep5x direction` and primes its rotation gizmo.
+static bool is_rep5x_modifier(const Slic3r::ModelVolume* vol)
+{
+    if (vol == nullptr || !vol->is_modifier()) return false;
+    return vol->name.rfind("Rep5x", 0) == 0;   // name starts with "Rep5x"
+}
+
+bool MainFrame::has_rotated_modifier() const
+{
+    if (!m_plater) return false;
+    const Slic3r::Model& model = m_plater->model();
+    if (model.objects.empty()) return false;
+    const Slic3r::ModelObject* obj = model.objects.front();
+    for (const Slic3r::ModelVolume* vol : obj->volumes) {
+        if (is_rep5x_modifier(vol))
+            return true;
+    }
+    return false;
+}
+
+void MainFrame::slice_5axis_action(bool from_main_button)
+{
+    if (!m_plater) return;
+    const Slic3r::Model& model = m_plater->model();
+    if (model.objects.empty() || model.objects.front()->volumes.empty()) {
+        wxMessageBox(_L("Load an object first to slice 5-axis."),
+                     _L("5-axis slicing"), wxICON_INFORMATION);
+        return;
+    }
+
+    // Resolve the running binary's path so we can spawn ourselves per region.
+    char self[4096] = {0};
+    const ssize_t n = readlink("/proc/self/exe", self, sizeof(self) - 1);
+    if (n < 0) {
+        wxMessageBox(_L("Cannot resolve orca-slicer binary path."),
+                     _L("5-axis slicing"), wxICON_ERROR);
+        return;
+    }
+    const std::filesystem::path bin_path(self);
+    // <repo>/build/package/bin/orca-slicer → <repo>
+    const std::filesystem::path repo_root =
+        bin_path.parent_path().parent_path().parent_path().parent_path();
+
+    // Use the user's CURRENTLY-ACTIVE presets — works with any printer profile.
+    const Slic3r::PresetBundle* pb = wxGetApp().preset_bundle;
+    if (!pb) {
+        wxMessageBox(_L("No preset bundle available."),
+                     _L("5-axis slicing"), wxICON_ERROR);
+        return;
+    }
+
+    Slic3r::FiveAxis::Rep5xScene scene;
+    const Slic3r::ModelObject* obj = model.objects.front();
+    const Slic3r::Geometry::Transformation inst_tr =
+        obj->instances.empty()
+            ? Slic3r::Geometry::Transformation()
+            : obj->instances.front()->get_transformation();
+
+    bool main_set = false;
+    for (const Slic3r::ModelVolume* vol : obj->volumes) {
+        const Eigen::Affine3d world_tr(inst_tr.get_matrix() * vol->get_transformation().get_matrix());
+
+        if (vol->is_model_part() && !main_set) {
+            // Main mesh: apply full world transform (translation + rotation + scale).
+            Slic3r::TriangleMesh mesh_copy = vol->mesh();
+            mesh_copy.transform(world_tr);
+            scene.main_mesh = std::move(mesh_copy);
+            main_set = true;
+        } else if (is_rep5x_modifier(vol)) {
+            // Rep5x direction modifier: use the modifier's WORLD-SPACE axis-aligned
+            // bounding box as the region cube. This matches what the user visually
+            // sees (the rotated modifier in the viewport). Region grows slightly when
+            // the modifier is rotated — acceptable trade-off vs. mismatched coverage.
+            Slic3r::TriangleMesh mesh_world = vol->mesh();
+            mesh_world.transform(world_tr);
+            const Slic3r::BoundingBoxf3 world_bbox = mesh_world.bounding_box();
+
+            Slic3r::TriangleMesh cube = Slic3r::make_cube(
+                world_bbox.size().x(), world_bbox.size().y(), world_bbox.size().z());
+            cube.translate(float(world_bbox.min.x()), float(world_bbox.min.y()), float(world_bbox.min.z()));
+
+            // Build direction: pure rotation of the modifier in world.
+            const Eigen::Matrix3d rot_inst = inst_tr.get_rotation_matrix().linear();
+            const Eigen::Matrix3d rot_vol  = vol->get_transformation().get_rotation_matrix().linear();
+
+            Slic3r::FiveAxis::ModifierVolume m;
+            m.id = "vol" + std::to_string(scene.modifiers.size());
+            m.mesh = std::move(cube);
+            m.transform = rot_inst * rot_vol;
+            scene.modifiers.push_back(std::move(m));
+        }
+    }
+    if (!main_set) {
+        wxMessageBox(_L("No main model part found in the active object."),
+                     _L("5-axis slicing"), wxICON_ERROR);
+        return;
+    }
+    if (scene.modifiers.empty()) {
+        wxMessageBox(_L("No Rep5x direction modifier found.\n\n"
+                        "Use File → Export → \"Add Rep5x direction modifier\" to create one, "
+                        "then move/rotate it to set the build direction for that region."),
+                     _L("5-axis slicing"), wxICON_INFORMATION);
+        return;
+    }
+
+    scene.orca_binary_path      = bin_path.string();
+    scene.machine_profile_path  = pb->printers.get_edited_preset().file;
+    scene.process_profile_path  = pb->prints.get_edited_preset().file;
+    scene.filament_profile_path = pb->filaments.get_edited_preset().file;
+
+    // Always pop a Save dialog so the user picks the output path explicitly.
+    // Defaults to the OS Downloads dir (cross-platform via wxStandardPaths).
+    (void)from_main_button;
+    wxString default_dir = wxStandardPaths::Get().GetUserDir(wxStandardPaths::Dir_Downloads);
+    if (default_dir.empty())
+        default_dir = wxStandardPaths::Get().GetDocumentsDir();
+    wxFileDialog dlg(this, _L("Save 5-axis G-code"), default_dir, "rep5x.gcode",
+                     "G-code (*.gcode)|*.gcode",
+                     wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
+    if (dlg.ShowModal() != wxID_OK) return;
+    const std::string out_path = dlg.GetPath().ToStdString();
+
+    const int rc = Slic3r::FiveAxis::Rep5xPipeline::run(scene, out_path);
+    if (rc == 0) {
+        // Spawn the helper script that runs a one-shot CORS HTTP server. It prints
+        // the chosen port to stdout, then forks: parent exits immediately, child
+        // serves exactly one request (the viewer's fetch of the .gcode) and exits.
+        // Helper lives at <repo>/scripts/rep5x-gcode-serve.py.
+        const std::filesystem::path out_p(out_path);
+        const std::string serve_dir  = out_p.parent_path().string();
+        const std::string serve_name = out_p.filename().string();
+        const std::string helper = (repo_root / "scripts/rep5x-gcode-serve.py").string();
+
+        std::string port;
+#ifdef _WIN32
+        // Try the Python launcher first ("py -3"), then "python" — neither has python3
+        // in PATH by default on a fresh Windows + python.org install.
+        const std::string null_dev = "NUL";
+        const std::vector<std::string> py_candidates = { "py -3", "python" };
+        auto quote = [](const std::string& s) { return std::string("\"") + s + "\""; };
+#else
+        const std::string null_dev = "/dev/null";
+        const std::vector<std::string> py_candidates = { "python3", "python" };
+        auto quote = [](const std::string& s) { return s; };  // unix shells don't need it for our paths
+#endif
+        for (const auto& py : py_candidates) {
+            const std::string cmd = py + " " + quote(helper) + " " + quote(serve_dir)
+                                  + " 2>" + null_dev;
+            FILE* fp = popen(cmd.c_str(), "r");
+            if (!fp) continue;
+            char buf[16] = {0};
+            if (fgets(buf, sizeof(buf), fp)) port = buf;
+            pclose(fp);
+            while (!port.empty() && (port.back() == '\n' || port.back() == '\r' || port.back() == ' '))
+                port.pop_back();
+            if (!port.empty()) break;
+        }
+
+        // Use 127.0.0.1 (not "localhost") — Firefox's mixed-content exception that
+        // lets HTTPS pages fetch from HTTP is keyed on the literal "127.0.0.1" host.
+        wxString viewer_url = "https://tools.rep5x.com/gcode-viewer/";
+        if (!port.empty()) {
+            viewer_url = wxString::Format(
+                "https://tools.rep5x.com/gcode-viewer/?gcodeUrl=http://127.0.0.1:%s/%s",
+                port, wxString::FromUTF8(serve_name));
+        }
+        wxLaunchDefaultBrowser(viewer_url);
+
+        wxMessageBox(wxString::Format(
+            _L("5-axis slice complete.\n%d Rep5x region(s).\nOutput: %s\n\n"
+               "Rep5x G-code viewer opened in your browser; auto-load %s."),
+            (int)scene.modifiers.size(), wxString::FromUTF8(out_path),
+            port.empty() ? _L("disabled (no Python found). Drag the file into the viewer.")
+                         : _L("via local server.")),
+            _L("5-axis slicing"), wxICON_INFORMATION);
+    } else {
+        wxMessageBox(wxString::Format(_L("5-axis slice failed (code %d). See terminal for details."), rc),
+                     _L("5-axis slicing"), wxICON_ERROR);
+    }
 }
 
 struct ConfigsOverwriteConfirmDialog : MessageDialog

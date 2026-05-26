@@ -1,0 +1,21 @@
+{
+    "type": "filament",
+    "name": "Generic PLA @Rep5x",
+    "inherits": "fdm_filament_pla",
+    "from": "system",
+    "setting_id": "RFSA01",
+    "filament_id": "RFL01",
+    "instantiation": "true",
+    "filament_flow_ratio": [
+        "0.98"
+    ],
+    "filament_max_volumetric_speed": [
+        "12"
+    ],
+    "slow_down_layer_time": [
+        "8"
+    ],
+    "compatible_printers": [
+        "Rep5x Ender 5 Pro 0.4 nozzle"
+    ]
+}

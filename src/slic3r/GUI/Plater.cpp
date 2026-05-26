@@ -13300,6 +13300,18 @@ void Plater::reload_print()
     p->preview->reload_print();
 }
 
+// OrcaSlicer-Rep5x: switch to Preview tab with no_slice=true so set_current_panel
+// doesn't auto-reslice the model (which would overwrite externally-loaded G-code).
+void Plater::switch_to_preview_no_slice()
+{
+    p->preview->reload_print(/*only_gcode=*/false);
+    if (auto* mf = wxGetApp().mainframe)
+        mf->select_tab(MainFrame::tpPreview);
+    p->set_current_panel(p->preview, /*no_slice=*/true);
+    if (p->get_current_canvas3D())
+        p->get_current_canvas3D()->render();
+}
+
 // BBS
 wxString Plater::get_project_name()
 {

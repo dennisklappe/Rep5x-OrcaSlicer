@@ -304,6 +304,13 @@ public:
     //bool        is_dlg_layout() const { return m_layout == ESettingsLayout::Dlg; }
 
     void        reslice_now();
+    // OrcaSlicer-Rep5x: returns true if the active model has any modifier with a non-identity rotation.
+    // The main Slice button uses this to decide whether to route through the 5-axis pipeline.
+    bool        has_rotated_modifier() const;
+    // OrcaSlicer-Rep5x: 5-axis slicing entry point. Used by both the menu item and the Slice button.
+    // from_main_button = true means we route from the big toolbar Slice button; we write to a default
+    // path next to the project; otherwise we pop a Save dialog.
+    void        slice_5axis_action(bool from_main_button);
     void        export_config();
     // Query user for the config file and open it.
     void        load_config_file();

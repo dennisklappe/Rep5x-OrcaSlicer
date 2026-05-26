@@ -1,0 +1,53 @@
+#!/bin/bash
+
+REQUIRED_DEV_PACKAGES=(
+    autoconf
+    automake
+    cmake
+    dbus-1-devel
+    file
+    gcc
+    gcc-c++
+    gettext-tools
+    git
+    glu-devel
+    gstreamer-devel
+    gstreamer-plugins-base-devel
+    gtk3-devel
+    kf6-extra-cmake-modules
+    libcurl-devel
+    libmspack-devel
+    libopenssl-devel
+    libsecret-devel
+    libspnav-devel
+    libtool
+    m4
+    Mesa-libGL-devel
+    Mesa-libGLESv2-devel
+    ninja
+    patch
+    perl
+    systemd-devel
+    texinfo
+    wayland-protocols-devel
+    webkitgtk3-devel
+    wget
+    zlib-devel
+)
+
+if [[ -n "$UPDATE_LIB" ]]
+then
+    NEEDED_PKGS=()
+    for PKG in "${REQUIRED_DEV_PACKAGES[@]}"; do
+        rpm -q "${PKG}" > /dev/null 2>&1 || NEEDED_PKGS+=("${PKG}")
+    done
+
+    if [[ "${#NEEDED_PKGS[*]}" -gt 0 ]]; then
+        sudo zypper install -y --no-recommends "${NEEDED_PKGS[@]}"
+    fi
+    echo -e "done\n"
+    exit 0
+fi
+
+export FOUND_GTK3_DEV
+FOUND_GTK3_DEV=$(rpm -qa | grep -P '^gtk3-devel' || true)

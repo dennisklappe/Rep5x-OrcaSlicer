@@ -2042,6 +2042,8 @@ void GLCanvas3D::render(bool only_init)
         if (!no_partplate) //BBS: add outline logic
             _render_platelist(camera.get_view_matrix(), camera.get_projection_matrix(), !camera.is_looking_downward(), only_current, only_body, hover_id, true, show_grid);
         _render_objects(GLVolumeCollection::ERenderType::Transparent, !m_gizmos.is_running());
+        // OrcaSlicer-Rep5x: XYZ triad on rotated modifier volumes (build-direction indicator)
+        render_rep5x_triads(m_volumes, camera);
     }
     /* preview render */
     else if (m_canvas_type == ECanvasType::CanvasPreview && m_render_preview) {

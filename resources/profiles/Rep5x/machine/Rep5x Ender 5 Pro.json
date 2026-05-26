@@ -1,0 +1,12 @@
+{
+    "type": "machine_model",
+    "name": "Rep5x Ender 5 Pro",
+    "model_id": "Rep5x_Ender_5_Pro",
+    "nozzle_diameter": "0.4",
+    "machine_tech": "FFF",
+    "family": "Rep5x",
+    "bed_model": "",
+    "bed_texture": "",
+    "hotend_model": "hotend.stl",
+    "default_materials": "Generic PLA @Rep5x"
+}

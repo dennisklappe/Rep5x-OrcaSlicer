@@ -17,6 +17,11 @@ add_executable(${_TEST_NAME}_tests
     test_mutable_priority_queue.cpp
     test_stl.cpp
     test_meshboolean.cpp
+    test_five_axis_demo.cpp
+    test_five_axis_envelope_collider.cpp
+    test_five_axis_gcode_stitcher.cpp
+    test_five_axis_mesh_splitter.cpp
+    test_five_axis_region_graph.cpp
     test_marchingsquares.cpp
     test_timeutils.cpp
     test_voronoi.cpp

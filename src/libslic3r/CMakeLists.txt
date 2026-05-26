@@ -175,6 +175,22 @@ set(lisbslic3r_sources
     Fill/Lightning/Layer.hpp
     Fill/Lightning/TreeNode.cpp
     Fill/Lightning/TreeNode.hpp
+    FiveAxis/EnvelopeCollider.cpp
+    FiveAxis/EnvelopeCollider.hpp
+    FiveAxis/GCodeStitcher.cpp
+    FiveAxis/GCodeStitcher.hpp
+    FiveAxis/MeshSplitter.cpp
+    FiveAxis/MeshSplitter.hpp
+    FiveAxis/RegionGraph.cpp
+    FiveAxis/RegionGraph.hpp
+    FiveAxis/RegionTypes.cpp
+    FiveAxis/RegionTypes.hpp
+    FiveAxis/Rep5xDemo.cpp
+    FiveAxis/Rep5xDemo.hpp
+    FiveAxis/Rep5xPipeline.cpp
+    FiveAxis/Rep5xPipeline.hpp
+    FiveAxis/Rep5xSlicerInvoker.cpp
+    FiveAxis/Rep5xSlicerInvoker.hpp
     Flow.cpp
     Flow.hpp
     FlushVolCalc.cpp
